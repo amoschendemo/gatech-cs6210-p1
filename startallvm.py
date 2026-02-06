@@ -12,6 +12,7 @@ if __name__ == '__main__':
     vms = manager.getFilteredVms(VM_PREFIX)
     
     for vmname in vms:
+        printf("Starting VM: %s" % vmname)
         manager.startVM(vmname)
         subprocess.call(['uvt-kvm', 'wait', vmname])
     time.sleep(5)

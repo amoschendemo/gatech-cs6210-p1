@@ -63,5 +63,68 @@ int main(int argc, char *argv[])
 /* COMPLETE THE IMPLEMENTATION */
 void CPUScheduler(virConnectPtr conn, int interval)
 {
-	
+	// List all VM's name and vCPU count and utilization.
+	virNodeInfo nodeinfo;
+	virDomainPtr *domains;
+	const char *name;
+	size_t i;
+	int ret;
+	int ncpus;
+	virVcpuInfo *cpuinfo = NULL;
+    unsigned char *cpumaps = NULL;
+    virDomainInfo dominfo;
+    int cpumaplen;
+	int nhostcpus;
+
+    if (virNodeGetInfo(conn, &nodeinfo) < 0) { // Get host CPU info
+        return;
+    }
+    nhostcpus = VIR_NODEINFO_MAXCPUS(nodeinfo);
+    cpumaplen = VIR_CPU_MAPLEN(nhostcpus); // Calculate map length in bytes
+
+	unsigned int flags = VIR_CONNECT_LIST_DOMAINS_RUNNING |
+						VIR_CONNECT_LIST_DOMAINS_PERSISTENT;
+	ret = virConnectListAllDomains(conn, &domains, flags);
+	if (ret < 0) {
+		fprintf(stderr, "Failed to get list of domains\n");
+		return;
+	}
+
+	for (i = 0; i < ret; i++) {
+		if (virDomainGetInfo(domains[i], &dominfo) != 0) { // Get domain vCPU count
+			return;
+		}
+		name = virDomainGetName(domains[i]);
+		printf("Domain name: %s\n", name);
+		
+		// Allocate memory for info and cpumaps arrays
+		cpuinfo = malloc(sizeof(virVcpuInfo) * dominfo.nrVirtCpu);
+		cpumaps = malloc(dominfo.nrVirtCpu * cpumaplen);
+		if (!cpuinfo || !cpumaps) {
+			// Handle memory allocation failure
+			free(cpuinfo);
+			free(cpumaps);
+			return;
+		}
+
+		ncpus = virDomainGetVcpus(domains[i], cpuinfo, dominfo.nrVirtCpu, cpumaps, cpumaplen);
+		if (ncpus < 0) {
+			// Handle error
+			fprintf(stderr, "Error getting vcpu info\\n");
+		} else {
+			// Process the results in cpuinfo and cpumaps
+			printf("Found %d vcpus\\n", ncpus);
+			for (int i = 0; i < ncpus; i++) {
+				printf("VCPU %d: state %d, cpu time %llu, real cpu %d\\n", cpuinfo[i].number, cpuinfo[i].state, cpuinfo[i].cpuTime, cpuinfo[i].cpu);
+				// Further logic to interpret cpumaps (bitmap of pinned physical CPUs)
+			}
+		}
+
+		virDomainFree(domains[i]);
+	}
+	free(domains);
+
+	// Free allocated memory
+	free(cpuinfo);
+	free(cpumaps);
 }
