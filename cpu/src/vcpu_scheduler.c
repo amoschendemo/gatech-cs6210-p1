@@ -11,7 +11,23 @@
 
 int is_exit = 0; // DO NOT MODIFY THIS VARIABLE
 
+struct VcpuInfo {
+	int index;
+	int pcpu_index;
+	double utilization;
+};
+
+struct VmInfo {
+	const char *name;
+	virDomainPtr domain;
+	int nr_vcpus;
+	struct VcpuInfo *vcpus;
+};
+
 void CPUScheduler(virConnectPtr conn, int interval);
+int get_active_vms(struct VmInfo **out_vms, virConnectPtr conn, virNodeInfo nodeinfo, int interval);
+int get_vcpus(struct VcpuInfo **out_vcpus, virDomainPtr domain, int nr_vcpus, virNodeInfo nodeinfo, int interval);
+int pin_vcpu_to_pcpu(virDomainPtr domain, int vcpu_index, int cpumaplen, int pcpu_index);
 
 /*
 DO NOT CHANGE THE FOLLOWING FUNCTION
@@ -60,19 +76,6 @@ int main(int argc, char *argv[])
 	return 0;
 }
 
-struct VcpuInfo {
-	int index;
-	int pcpu_index;
-	double utilization;
-}
-
-struct VmInfo {
-	char *name;
-	virDomainPtr domain;
-	int nr_vcpus;
-	VcpuInfo *vcpus;
-}
-
 // The last saved cumulative idle CPU time from previous interval
 unsigned long long *previous_pcpu_stats_idles = NULL;
 
@@ -92,7 +95,7 @@ void CPUScheduler(virConnectPtr conn, int interval)
 		previous_pcpu_stats_idles = calloc(nr_pcpus, sizeof(double));
 	}
 	double *pcpu_stats_idle_rates = calloc(nr_pcpus, sizeof(double));
-	for (i = 0; i < nr_pcpus; i++) {
+	for (int i = 0; i < nr_pcpus; i++) {
         virNodeCPUStats params[VIR_NODE_CPU_STATS_FIELD_LENGTH];
         int nr_stats = 0;
 
@@ -113,34 +116,34 @@ void CPUScheduler(virConnectPtr conn, int interval)
             }
         }
 	}
-	for (i = 0; i < nr_pcpus; i++) {
-		printf("pCPU %d Idle Rate: %p\n", i, pcpu_stats_idle_rates[i]);
+	for (int i = 0; i < nr_pcpus; i++) {
+		printf("pCPU %d Idle Rate: %f%%\n", i, pcpu_stats_idle_rates[i]);
 	}
 
 	// 3. Get active VMs
-	VmInfo *vms = NULL;
+	struct VmInfo *vms = NULL;
 	int nr_vms = get_active_vms(&vms, conn, nodeinfo, interval);
 	if (nr_vms < 0) {
 		fprintf(stderr, "Failed to get list of active VMs\n");
 		return;
 	}
-	printf("Found %d active VMs\n", ret);
-	for (i = 0; i < nr_vms; i++) {
-		VmInfo vm = vms[i];
+	printf("Found %d active VMs\n", nr_vms);
+	for (int i = 0; i < nr_vms; i++) {
+		struct VmInfo vm = vms[i];
 		printf("%s, vCPUs [",vm.name);
 		int nr_vcpus  = vm.nr_vcpus;
-		for (j = 0; j < nr_vcpus; j++) {
-			VcpuInfo vcpu = vm.vcpus[j];
-			printf("{index: %d, pcpu: %d, utilization %p}", vcpu.index, vcpu.pcpu_index, vcpu.utilization);
+		for (int j = 0; j < nr_vcpus; j++) {
+			struct VcpuInfo vcpu = vm.vcpus[j];
+			printf("{index: %d, pcpu: %d, utilization %f%%}", vcpu.index, vcpu.pcpu_index, vcpu.utilization);
 			if (j + 1 < nr_vcpus) {
-				printf(", ")
+				printf(", ");
 			}
 		}
-		printf("]\n")
+		printf("]\n");
 	}
 
 	if (previous_pcpu_stats_idles) {
-		free(previous_pcpu_stats_idles)
+		free(previous_pcpu_stats_idles);
 	}
 	free(vms);
 }
@@ -155,9 +158,9 @@ void CPUScheduler(virConnectPtr conn, int interval)
  * @param out_vms: A pointer to the pointer that will hold the new address.
  * @return: The number of VmInfos allocated on success, or -1 on error.
  */
-int get_active_vms(VmInfo **out_vms, virConnectPtr conn, virNodeInfo nodeinfo, int interval){
+int get_active_vms(struct VmInfo **out_vms, virConnectPtr conn, virNodeInfo nodeinfo, int interval){
 	// 1. Safety check
-    if (out_vms == NULL || conn == NULL || nodeinfo == NULL) {
+    if (out_vms == NULL) {
         return -1; 
     }
 
@@ -172,14 +175,14 @@ int get_active_vms(VmInfo **out_vms, virConnectPtr conn, virNodeInfo nodeinfo, i
 	}
 
 	// 3. Allocate memory on the HEAP
-    *out_vms = malloc(nr_vms * sizeof(VmInfo));
+    *out_vms = malloc(nr_vms * sizeof(struct VmInfo));
 
 	// 4. Get Virtual Machine's name and vCPU usage
-	for (i = 0; i < nr_vms; i++) {
-		virDomainPtr *domain = domains[i];
+	for (int i = 0; i < nr_vms; i++) {
+		virDomainPtr domain = domains[i];
 
 		// 4.1 Get number of vCPUs for a given domain (i.e VM)
-		virDomainInfoPtr *dominfo;
+		virDomainInfo dominfo;
 		if (virDomainGetInfo(domain, &dominfo) != 0) { // Get domain vCPU count
 			fprintf(stderr, "Failed to get info for domain: %d\n", i);
 			return -1;
@@ -187,19 +190,19 @@ int get_active_vms(VmInfo **out_vms, virConnectPtr conn, virNodeInfo nodeinfo, i
 
 		// 4.2 Allocate memory for getting virtual CPU info
 		int nr_vcpus = dominfo.nrVirtCpu;
-		VcpuInfo *vcpuinfos = malloc(nr_vcpus * sizeof(VcpuInfo));
+		struct VcpuInfo *vcpuinfos = malloc(nr_vcpus * sizeof(struct VcpuInfo));
 		if (get_vcpus(&vcpuinfos, domain, nr_vcpus, nodeinfo, interval) != nr_vcpus) {
 			fprintf(stderr, "Failed to get virtual CPU info for domain: %d\n", i);
 			return -1;
 		}
 		
-		VmInfo vm = {
+		struct VmInfo vm = {
 			.name = virDomainGetName(domain),
 			.domain = domain,
 			.nr_vcpus = nr_vcpus,
 			.vcpus = vcpuinfos
 		};
-		out_vms[i] = vm;
+		(*out_vms)[i] = vm;
 		
 		virDomainFree(domains[i]);
 		free(vcpuinfos);
@@ -216,7 +219,7 @@ int get_active_vms(VmInfo **out_vms, virConnectPtr conn, virNodeInfo nodeinfo, i
  * @param out_vcpus: list of VcpuInfo
  * @return -1 when memory allocation fails, 0 otherwise.
  */
-int get_vcpus(VcpuInfo **out_vcpus, virDomainPtr domain, int nr_vcpus, virNodeInfo nodeinfo, int interval) {
+int get_vcpus(struct VcpuInfo **out_vcpus, virDomainPtr domain, int nr_vcpus, virNodeInfo nodeinfo, int interval) {
 	// 1. Get physical CPUs mapping length in bytes. This is used later when getting vcpu info.
 	int nr_pcpus = nodeinfo.cpus;
 	size_t pcpu_maplen = VIR_CPU_MAPLEN(nr_pcpus);
@@ -235,12 +238,12 @@ int get_vcpus(VcpuInfo **out_vcpus, virDomainPtr domain, int nr_vcpus, virNodeIn
 		printf("Found %d vcpus\n", ret);
 		for (int i = 0; i < ret; i++) {
 			virVcpuInfo vcpu_info = vcpuinfos[i];
-			VcpuInfo vcpu = {
+			struct VcpuInfo vcpu = {
 				.index = vcpu_info.number,
 				.pcpu_index = vcpu_info.cpu,
 				.utilization = vcpu_info.cpuTime / interval,
 			};
-			out_vcpus[i] = vcpu;
+			(*out_vcpus)[i] = vcpu;
 		}
 	}
 
@@ -252,7 +255,7 @@ int get_vcpus(VcpuInfo **out_vcpus, virDomainPtr domain, int nr_vcpus, virNodeIn
 struct PcpuInfo {
 	int index;
 	double utilization;
-}
+};
 
 /**
  * @brief Pin a virtual CPU to a physical CPU.
