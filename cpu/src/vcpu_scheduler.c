@@ -60,71 +60,235 @@ int main(int argc, char *argv[])
 	return 0;
 }
 
+struct VcpuInfo {
+	int index;
+	int pcpu_index;
+	double utilization;
+}
+
+struct VmInfo {
+	char *name;
+	virDomainPtr domain;
+	int nr_vcpus;
+	VcpuInfo *vcpus;
+}
+
+// The last saved cumulative idle CPU time from previous interval
+unsigned long long *previous_pcpu_stats_idles = NULL;
+
 /* COMPLETE THE IMPLEMENTATION */
 void CPUScheduler(virConnectPtr conn, int interval)
 {
-	// List all VM's name and vCPU count and utilization.
+	// 1. Get host physical machine's hardware details
 	virNodeInfo nodeinfo;
-	virDomainPtr *domains;
-	const char *name;
-	size_t i;
-	int ret;
-	int ncpus;
-	virVcpuInfo *cpuinfo = NULL;
-    unsigned char *cpumaps = NULL;
-    virDomainInfo dominfo;
-    int cpumaplen;
-	int nhostcpus;
-
     if (virNodeGetInfo(conn, &nodeinfo) < 0) { // Get host CPU info
         return;
     }
-    nhostcpus = VIR_NODEINFO_MAXCPUS(nodeinfo);
-    cpumaplen = VIR_CPU_MAPLEN(nhostcpus); // Calculate map length in bytes
 
-	unsigned int flags = VIR_CONNECT_LIST_DOMAINS_RUNNING |
-						VIR_CONNECT_LIST_DOMAINS_PERSISTENT;
-	ret = virConnectListAllDomains(conn, &domains, flags);
-	if (ret < 0) {
-		fprintf(stderr, "Failed to get list of domains\n");
+	unsigned long long interval_ns = interval * 1000000000L;
+	// 2. Get host CPU info
+	int nr_pcpus = nodeinfo.cpus;
+	if (previous_pcpu_stats_idles == NULL) {
+		previous_pcpu_stats_idles = calloc(nr_pcpus, sizeof(double));
+	}
+	double *pcpu_stats_idle_rates = calloc(nr_pcpus, sizeof(double));
+	for (i = 0; i < nr_pcpus; i++) {
+        virNodeCPUStats params[VIR_NODE_CPU_STATS_FIELD_LENGTH];
+        int nr_stats = 0;
+
+        // First call with nr_stats=0 to get the number of supported stats for this CPU
+        if (virNodeGetCPUStats(conn, i, NULL, &nr_stats, 0) == 0 && nr_stats != 0) {
+            if (virNodeGetCPUStats(conn, i, params, &nr_stats, 0) == 0) {
+                for (int j = 0; j < nr_stats; j++) {
+                    // Search specifically for the 'idle' field
+                    if (strcmp(params[j].field, VIR_NODE_CPU_STATS_IDLE) == 0) {
+                        printf("pCPU %d Idle Time: %llu ns\n", i, params[j].value);
+						unsigned long long idle_ns = params[j].value;
+						if (previous_pcpu_stats_idles[i] > 0) {
+							pcpu_stats_idle_rates[i] = (idle_ns - previous_pcpu_stats_idles[i]) / interval_ns;
+						}
+						previous_pcpu_stats_idles[i] = params[j].value;
+                    }
+                }
+            }
+        }
+	}
+	for (i = 0; i < nr_pcpus; i++) {
+		printf("pCPU %d Idle Rate: %p\n", i, pcpu_stats_idle_rates[i]);
+	}
+
+	// 3. Get active VMs
+	VmInfo *vms = NULL;
+	int nr_vms = get_active_vms(&vms, conn, nodeinfo, interval);
+	if (nr_vms < 0) {
+		fprintf(stderr, "Failed to get list of active VMs\n");
 		return;
 	}
-
-	for (i = 0; i < ret; i++) {
-		if (virDomainGetInfo(domains[i], &dominfo) != 0) { // Get domain vCPU count
-			return;
-		}
-		name = virDomainGetName(domains[i]);
-		printf("Domain name: %s\n", name);
-		
-		// Allocate memory for info and cpumaps arrays
-		cpuinfo = malloc(sizeof(virVcpuInfo) * dominfo.nrVirtCpu);
-		cpumaps = malloc(dominfo.nrVirtCpu * cpumaplen);
-		if (!cpuinfo || !cpumaps) {
-			// Handle memory allocation failure
-			free(cpuinfo);
-			free(cpumaps);
-			return;
-		}
-
-		ncpus = virDomainGetVcpus(domains[i], cpuinfo, dominfo.nrVirtCpu, cpumaps, cpumaplen);
-		if (ncpus < 0) {
-			// Handle error
-			fprintf(stderr, "Error getting vcpu info\\n");
-		} else {
-			// Process the results in cpuinfo and cpumaps
-			printf("Found %d vcpus\\n", ncpus);
-			for (int i = 0; i < ncpus; i++) {
-				printf("VCPU %d: state %d, cpu time %llu, real cpu %d\\n", cpuinfo[i].number, cpuinfo[i].state, cpuinfo[i].cpuTime, cpuinfo[i].cpu);
-				// Further logic to interpret cpumaps (bitmap of pinned physical CPUs)
+	printf("Found %d active VMs\n", ret);
+	for (i = 0; i < nr_vms; i++) {
+		VmInfo vm = vms[i];
+		printf("%s, vCPUs [",vm.name);
+		int nr_vcpus  = vm.nr_vcpus;
+		for (j = 0; j < nr_vcpus; j++) {
+			VcpuInfo vcpu = vm.vcpus[j];
+			printf("{index: %d, pcpu: %d, utilization %p}", vcpu.index, vcpu.pcpu_index, vcpu.utilization);
+			if (j + 1 < nr_vcpus) {
+				printf(", ")
 			}
 		}
-
-		virDomainFree(domains[i]);
+		printf("]\n")
 	}
-	free(domains);
 
-	// Free allocated memory
-	free(cpuinfo);
+	if (previous_pcpu_stats_idles) {
+		free(previous_pcpu_stats_idles)
+	}
+	free(vms);
+}
+
+/**
+ * @brief Get a list of active VMs
+ * 
+ * Allocates and initializes an array of VmInfo. Use virConnectListAllDomains,
+ * virDomainGetInfo, and virDomainGetVcpus to extract VM's vCPU info.
+ * 
+ * @param conn: An active connection to a hypervisor.
+ * @param out_vms: A pointer to the pointer that will hold the new address.
+ * @return: The number of VmInfos allocated on success, or -1 on error.
+ */
+int get_active_vms(VmInfo **out_vms, virConnectPtr conn, virNodeInfo nodeinfo, int interval){
+	// 1. Safety check
+    if (out_vms == NULL || conn == NULL || nodeinfo == NULL) {
+        return -1; 
+    }
+
+	// 2. Get number of active VMs
+	virDomainPtr *domains;
+	unsigned int flags = VIR_CONNECT_LIST_DOMAINS_RUNNING |
+						 VIR_CONNECT_LIST_DOMAINS_PERSISTENT;
+	int nr_vms = virConnectListAllDomains(conn, &domains, flags);
+	if (nr_vms < 0) {
+		fprintf(stderr, "Failed to get list of domains\n");
+		return -1;
+	}
+
+	// 3. Allocate memory on the HEAP
+    *out_vms = malloc(nr_vms * sizeof(VmInfo));
+
+	// 4. Get Virtual Machine's name and vCPU usage
+	for (i = 0; i < nr_vms; i++) {
+		virDomainPtr *domain = domains[i];
+
+		// 4.1 Get number of vCPUs for a given domain (i.e VM)
+		virDomainInfoPtr *dominfo;
+		if (virDomainGetInfo(domain, &dominfo) != 0) { // Get domain vCPU count
+			fprintf(stderr, "Failed to get info for domain: %d\n", i);
+			return -1;
+		}
+
+		// 4.2 Allocate memory for getting virtual CPU info
+		int nr_vcpus = dominfo.nrVirtCpu;
+		VcpuInfo *vcpuinfos = malloc(nr_vcpus * sizeof(VcpuInfo));
+		if (get_vcpus(&vcpuinfos, domain, nr_vcpus, nodeinfo, interval) != nr_vcpus) {
+			fprintf(stderr, "Failed to get virtual CPU info for domain: %d\n", i);
+			return -1;
+		}
+		
+		VmInfo vm = {
+			.name = virDomainGetName(domain),
+			.domain = domain,
+			.nr_vcpus = nr_vcpus,
+			.vcpus = vcpuinfos
+		};
+		out_vms[i] = vm;
+		
+		virDomainFree(domains[i]);
+		free(vcpuinfos);
+	}
+
+	free(domains);
+	return nr_vms;
+}
+
+
+/**
+ * @brief Get virtual CPU information
+ * 
+ * @param out_vcpus: list of VcpuInfo
+ * @return -1 when memory allocation fails, 0 otherwise.
+ */
+int get_vcpus(VcpuInfo **out_vcpus, virDomainPtr domain, int nr_vcpus, virNodeInfo nodeinfo, int interval) {
+	// 1. Get physical CPUs mapping length in bytes. This is used later when getting vcpu info.
+	int nr_pcpus = nodeinfo.cpus;
+	size_t pcpu_maplen = VIR_CPU_MAPLEN(nr_pcpus);
+
+	// 2. Memory allocation for vcpuinfo and cpumaps
+    virVcpuInfoPtr vcpuinfos = malloc(nr_vcpus * sizeof(virVcpuInfo));
+    unsigned char *cpumaps  = malloc(nr_vcpus * pcpu_maplen);
+
+	// 3. Get vCPU info
+	int ret = virDomainGetVcpus(domain, vcpuinfos, nr_vcpus, cpumaps, pcpu_maplen);
+	if (ret < 0) {
+		// Handle error
+		fprintf(stderr, "Error getting vcpu info\n");
+	} else {
+		// Process the results in cpuinfo and cpumaps
+		printf("Found %d vcpus\n", ret);
+		for (int i = 0; i < ret; i++) {
+			virVcpuInfo vcpu_info = vcpuinfos[i];
+			VcpuInfo vcpu = {
+				.index = vcpu_info.number,
+				.pcpu_index = vcpu_info.cpu,
+				.utilization = vcpu_info.cpuTime / interval,
+			};
+			out_vcpus[i] = vcpu;
+		}
+	}
+
+	free(vcpuinfos);
 	free(cpumaps);
+	return ret;
+}
+
+struct PcpuInfo {
+	int index;
+	double utilization;
+}
+
+/**
+ * @brief Pin a virtual CPU to a physical CPU.
+ *
+ * This function pins a virtual CPU (vCPU) of a domain to a specific 
+ * physical CPU (pCPU) on the host. It allocates a CPU map (bitmask) 
+ * to specify which pCPU the vCPU should be pinned to, and then uses 
+ * the libvirt API to set the CPU affinity for the vCPU.
+ *
+ * @param domain The domain pointer.
+ * @param vcpu_index The virtual CPU index.
+ * @param cpumaplen The length of the CPU map buffer in bytes.
+ * @param pcpu_index The physical CPU index to pin the virtual CPU to.
+ * @return -1 when memory allocation fails, 0 otherwise.
+ */
+int pin_vcpu_to_pcpu(virDomainPtr domain, int vcpu_index, int cpumaplen, int pcpu_index) {
+	// 1. Allocate the bitmask (cpumap) for the number of host CPUs (nhostcpus) using calloc to initialize it to all zeros
+	unsigned char *cpumap;
+	cpumap = calloc(1, cpumaplen); // Initialize map to all zeros
+	if (!cpumap) {
+		fprintf(stderr, "Memory allocation failed for cpumap\n");
+        return -1;
+    }
+
+	// 2. Set the bit for the physical CPU (pcpu_index) in the cpumap.
+    VIR_USE_CPU(cpumap, pcpu_index);
+
+	// 3. Apply the pinning to the domain
+    if (virDomainPinVcpu(domain, vcpu_index, cpumap, cpumaplen) < 0) {
+        fprintf(stderr, "Failed to pin vCPU\n");
+        free(cpumap);
+        return -1;
+    }
+
+	printf("Successfully pinned vCPU %d to pCPU %d\n", vcpu_index, pcpu_index);
+
+	free(cpumap);
+	return 0;
 }
