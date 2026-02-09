@@ -12,9 +12,9 @@
 int is_exit = 0; // DO NOT MODIFY THIS VARIABLE
 
 struct VcpuInfo {
-	int index;
+	unsigned int index;
 	int pcpu_index;
-	double utilization;
+	unsigned long long cpu_time; // CPU time used, in nanoseconds since the creation of the domain/vm
 };
 
 struct VmInfo {
@@ -127,14 +127,13 @@ void CPUScheduler(virConnectPtr conn, int interval)
 		fprintf(stderr, "Failed to get list of active VMs\n");
 		return;
 	}
-	printf("Found %d active VMs\n", nr_vms);
 	for (int i = 0; i < nr_vms; i++) {
 		struct VmInfo vm = vms[i];
 		printf("%s, vCPUs [",vm.name);
 		int nr_vcpus  = vm.nr_vcpus;
 		for (int j = 0; j < nr_vcpus; j++) {
 			struct VcpuInfo vcpu = vm.vcpus[j];
-			printf("{index: %d, pcpu: %d, utilization %f%%}", vcpu.index, vcpu.pcpu_index, vcpu.utilization);
+			printf("{index: %d, pcpu: %d, cpu time: %lld}", vcpu.index, vcpu.pcpu_index, vcpu.cpu_time);
 			if (j + 1 < nr_vcpus) {
 				printf(", ");
 			}
@@ -195,9 +194,9 @@ int get_active_vms(struct VmInfo **out_vms, virConnectPtr conn, virNodeInfo node
 			fprintf(stderr, "Failed to get virtual CPU info for domain: %d\n", i);
 			return -1;
 		}
-		
+
 		struct VmInfo vm = {
-			.name = virDomainGetName(domain),
+			.name = strdup(virDomainGetName(domain)),
 			.domain = domain,
 			.nr_vcpus = nr_vcpus,
 			.vcpus = vcpuinfos
@@ -205,7 +204,6 @@ int get_active_vms(struct VmInfo **out_vms, virConnectPtr conn, virNodeInfo node
 		(*out_vms)[i] = vm;
 		
 		virDomainFree(domains[i]);
-		free(vcpuinfos);
 	}
 
 	free(domains);
@@ -235,13 +233,12 @@ int get_vcpus(struct VcpuInfo **out_vcpus, virDomainPtr domain, int nr_vcpus, vi
 		fprintf(stderr, "Error getting vcpu info\n");
 	} else {
 		// Process the results in cpuinfo and cpumaps
-		printf("Found %d vcpus\n", ret);
 		for (int i = 0; i < ret; i++) {
 			virVcpuInfo vcpu_info = vcpuinfos[i];
 			struct VcpuInfo vcpu = {
-				.index = vcpu_info.number,
+				.index      = vcpu_info.number,
 				.pcpu_index = vcpu_info.cpu,
-				.utilization = vcpu_info.cpuTime / interval,
+				.cpu_time   = vcpu_info.cpuTime,
 			};
 			(*out_vcpus)[i] = vcpu;
 		}
