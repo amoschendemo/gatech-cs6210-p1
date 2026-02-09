@@ -19,9 +19,11 @@ struct VcpuInfo {
 
 struct VmInfo {
 	const char *name;
+	unsigned int id;
 	virDomainPtr domain;
 	int nr_vcpus;
 	struct VcpuInfo *vcpus;
+	double utilization;
 };
 
 void CPUScheduler(virConnectPtr conn, int interval);
@@ -40,6 +42,11 @@ void signal_callback_handler()
 
 // The last saved cumulative idle CPU time from previous interval
 unsigned long long *previous_pcpu_stats_idles = NULL;
+
+// The last saved cumulative CPU time used for each vCPU.
+// ASSUMPTION: Each VM has one vCPU.
+struct VmInfo *previous_vm_infos = NULL;
+int previous_nr_vm_infos = 0;
 
 /*
 DO NOT CHANGE THE FOLLOWING FUNCTION
@@ -81,7 +88,9 @@ int main(int argc, char *argv[])
 	if (previous_pcpu_stats_idles != NULL) {
 		free(previous_pcpu_stats_idles);
 	}
-	
+	if (previous_vm_infos != NULL) {
+		free(previous_vm_infos);
+	}
 	return 0;
 }
 
@@ -134,21 +143,46 @@ void CPUScheduler(virConnectPtr conn, int interval)
 		fprintf(stderr, "Failed to get list of active VMs\n");
 		return;
 	}
+	if (previous_vm_infos == NULL || previous_nr_vm_infos != nr_vms) {
+		previous_vm_infos = calloc(nr_vms, sizeof(struct VmInfo));
+		previous_nr_vm_infos = nr_vms;
+	}
 	for (int i = 0; i < nr_vms; i++) {
 		struct VmInfo vm = vms[i];
-		printf("%s, vCPUs [",vm.name);
+		struct VmInfo *previous_vm = NULL;
+		// Look up the previous match VM info
+		for (int j = 0; j < nr_vms; j++) {
+			struct VmInfo temp_vm = previous_vm_infos[j];
+			if (temp_vm.id == vm.id) {
+				previous_vm = &temp_vm;
+				break;
+			}
+		}
+
+		// DEBUG
+		// if (previous_vm != NULL) {
+		// 	printf("Found previous VM id: %d, with CPU time %lld\n", previous_vm->id, previous_vm->vcpus[0].cpu_time);
+		// }
+
+		printf("%s, id: %d, vCPUs: [", vm.name, vm.id);
 		int nr_vcpus  = vm.nr_vcpus;
 		for (int j = 0; j < nr_vcpus; j++) {
 			struct VcpuInfo vcpu = vm.vcpus[j];
-			printf("{index: %d, pcpu: %d, cpu time: %lld}", vcpu.index, vcpu.pcpu_index, vcpu.cpu_time);
+			struct VcpuInfo *previous_vcpu = NULL;
+			double utilization = -1;
+			if (previous_vm != NULL) {
+				previous_vcpu = &previous_vm->vcpus[j];
+				utilization = (vcpu.cpu_time - previous_vcpu->cpu_time) *100 / interval_ns;
+			}
+			printf("{index: %d, pcpu: %d, cpu time: %lld, utilization: %f%%}", vcpu.index, vcpu.pcpu_index, vcpu.cpu_time, utilization);
 			if (j + 1 < nr_vcpus) {
 				printf(", ");
 			}
 		}
 		printf("]\n");
 	}
-
-	free(vms);
+	free(previous_vm_infos);
+	previous_vm_infos = vms;
 }
 
 /**
@@ -201,6 +235,7 @@ int get_active_vms(struct VmInfo **out_vms, virConnectPtr conn, virNodeInfo node
 
 		struct VmInfo vm = {
 			.name = strdup(virDomainGetName(domain)),
+			.id = virDomainGetID(domain),
 			.domain = domain,
 			.nr_vcpus = nr_vcpus,
 			.vcpus = vcpuinfos
