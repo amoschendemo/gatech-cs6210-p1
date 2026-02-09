@@ -22,8 +22,10 @@ struct VmInfo {
 	unsigned int id;
 	virDomainPtr domain;
 	int nr_vcpus;
+	unsigned long long cpu_time;
 	struct VcpuInfo *vcpus;
 	double utilization;
+	double utilization_2;
 };
 
 void CPUScheduler(virConnectPtr conn, int interval);
@@ -161,7 +163,13 @@ void CPUScheduler(virConnectPtr conn, int interval)
 
 		// DEBUG
 		if (previous_vm != NULL) {
-			printf("Found previous VM id: %d, with CPU time %lld, utilization: %f%%\n", previous_vm->id, previous_vm->vcpus[0].cpu_time, previous_vm->utilization);
+			printf("Found previous VM id: %d, with CPU time %lld, utilization 1: %f%% utilization 2: %f%%\n", previous_vm->id, previous_vm->vcpus[0].cpu_time, previous_vm->utilization, previous_vm->utilization_2);
+		}
+
+		double utilization_2 = -1;
+		if (previous_vm != NULL) {
+			utilization_2 = (vm->cpu_time - previous_vm->cpu_time) * 100.0 / interval_ns;
+			vm->utilization_2 = utilization_2;
 		}
 
 		printf("%s, id: %d, vCPUs: [", vm->name, vm->id);
@@ -180,7 +188,7 @@ void CPUScheduler(virConnectPtr conn, int interval)
 				printf(", ");
 			}
 		}
-		printf("]\n");
+		printf("], utilization 2: %f%%\n", vm->utilization_2);
 	}
 	free(previous_vm_infos);
 	previous_vm_infos = vms;
@@ -239,6 +247,7 @@ int get_active_vms(struct VmInfo **out_vms, virConnectPtr conn, virNodeInfo node
 			.id = virDomainGetID(domain),
 			.domain = domain,
 			.nr_vcpus = nr_vcpus,
+			.cpu_time = dominfo.cpuTime,
 			.vcpus = vcpuinfos
 		};
 		(*out_vms)[i] = vm;
