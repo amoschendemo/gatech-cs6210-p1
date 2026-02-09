@@ -148,33 +148,34 @@ void CPUScheduler(virConnectPtr conn, int interval)
 		previous_nr_vm_infos = nr_vms;
 	}
 	for (int i = 0; i < nr_vms; i++) {
-		struct VmInfo vm = vms[i];
+		struct VmInfo *vm = &vms[i];
 		struct VmInfo *previous_vm = NULL;
 		// Look up the previous match VM info
 		for (int j = 0; j < nr_vms; j++) {
 			struct VmInfo temp_vm = previous_vm_infos[j];
-			if (temp_vm.id == vm.id) {
+			if (temp_vm.id == vm->id) {
 				previous_vm = &temp_vm;
 				break;
 			}
 		}
 
 		// DEBUG
-		// if (previous_vm != NULL) {
-		// 	printf("Found previous VM id: %d, with CPU time %lld\n", previous_vm->id, previous_vm->vcpus[0].cpu_time);
-		// }
+		if (previous_vm != NULL) {
+			printf("Found previous VM id: %d, with CPU time %lld, utilization: %f%%\n", previous_vm->id, previous_vm->vcpus[0].cpu_time, previous_vm->utilization);
+		}
 
-		printf("%s, id: %d, vCPUs: [", vm.name, vm.id);
-		int nr_vcpus  = vm.nr_vcpus;
+		printf("%s, id: %d, vCPUs: [", vm->name, vm->id);
+		int nr_vcpus  = vm->nr_vcpus;
 		for (int j = 0; j < nr_vcpus; j++) {
-			struct VcpuInfo vcpu = vm.vcpus[j];
+			struct VcpuInfo vcpu = vm->vcpus[j];
 			struct VcpuInfo *previous_vcpu = NULL;
 			double utilization = -1;
 			if (previous_vm != NULL) {
 				previous_vcpu = &previous_vm->vcpus[j];
-				utilization = (vcpu.cpu_time - previous_vcpu->cpu_time) *100 / interval_ns;
+				utilization = (vcpu.cpu_time - previous_vcpu->cpu_time) * 100.0 / interval_ns;
 			}
-			printf("{index: %d, pcpu: %d, cpu time: %lld, utilization: %f%%}", vcpu.index, vcpu.pcpu_index, vcpu.cpu_time, utilization);
+			vm->utilization = utilization;
+			printf("{index: %d, pcpu: %d, cpu time: %lld, utilization: %f%%}", vcpu.index, vcpu.pcpu_index, vcpu.cpu_time, vm->utilization);
 			if (j + 1 < nr_vcpus) {
 				printf(", ");
 			}
