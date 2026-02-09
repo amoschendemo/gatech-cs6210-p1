@@ -38,6 +38,9 @@ void signal_callback_handler()
 	is_exit = 1;
 }
 
+// The last saved cumulative idle CPU time from previous interval
+unsigned long long *previous_pcpu_stats_idles = NULL;
+
 /*
 DO NOT CHANGE THE FOLLOWING FUNCTION
 */
@@ -73,11 +76,14 @@ int main(int argc, char *argv[])
 
 	// Closing the connection
 	virConnectClose(conn);
+	
+	// Free memory 
+	if (previous_pcpu_stats_idles != NULL) {
+		free(previous_pcpu_stats_idles);
+	}
+	
 	return 0;
 }
-
-// The last saved cumulative idle CPU time from previous interval
-unsigned long long *previous_pcpu_stats_idles = NULL;
 
 /* COMPLETE THE IMPLEMENTATION */
 void CPUScheduler(virConnectPtr conn, int interval)
@@ -92,7 +98,7 @@ void CPUScheduler(virConnectPtr conn, int interval)
 	// 2. Get host CPU info
 	int nr_pcpus = nodeinfo.cpus;
 	if (previous_pcpu_stats_idles == NULL) {
-		previous_pcpu_stats_idles = calloc(nr_pcpus, sizeof(double));
+		previous_pcpu_stats_idles = calloc(nr_pcpus, sizeof(unsigned long long));
 	}
 	double *pcpu_stats_idle_rates = calloc(nr_pcpus, sizeof(double));
 	for (int i = 0; i < nr_pcpus; i++) {
@@ -105,12 +111,13 @@ void CPUScheduler(virConnectPtr conn, int interval)
                 for (int j = 0; j < nr_stats; j++) {
                     // Search specifically for the 'idle' field
                     if (strcmp(params[j].field, VIR_NODE_CPU_STATS_IDLE) == 0) {
-                        printf("pCPU %d Idle Time: %llu ns\n", i, params[j].value);
-						unsigned long long idle_ns = params[j].value;
-						if (previous_pcpu_stats_idles[i] > 0) {
-							pcpu_stats_idle_rates[i] = (idle_ns - previous_pcpu_stats_idles[i]) / interval_ns;
+						unsigned long long current_idle_ns = params[j].value;
+						unsigned long long previous_idle_ns = previous_pcpu_stats_idles[i];
+						if (previous_idle_ns > 0) {
+							double idle_rate = (current_idle_ns - previous_idle_ns) * 100 / interval_ns;
+							pcpu_stats_idle_rates[i] = idle_rate;
 						}
-						previous_pcpu_stats_idles[i] = params[j].value;
+						previous_pcpu_stats_idles[i] = current_idle_ns;
                     }
                 }
             }
@@ -141,9 +148,6 @@ void CPUScheduler(virConnectPtr conn, int interval)
 		printf("]\n");
 	}
 
-	if (previous_pcpu_stats_idles) {
-		free(previous_pcpu_stats_idles);
-	}
 	free(vms);
 }
 
