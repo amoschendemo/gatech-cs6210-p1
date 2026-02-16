@@ -3,17 +3,6 @@
 #include "graph.h"
 #include "mcmf.h"
 
-static void print_graph(FlowGraph g) {
-    printf("Edges:\n");
-    for (int i = 0; i < g.nr_edges; i++) {
-        printf("%d: {to: %d, capacity: %d, cost: %d, flow: %d, next: %d}\n", i, g.edges[i].to, g.edges[i].capacity, g.edges[i].cost, g.edges[i].flow, g.edges[i].next);
-    }
-    printf("Heads:\n");
-    for (int i = 0; i < g.nr_nodes; i++) {
-        printf("%d: %d\n", i, g.heads[i]);
-    }
-}
-
 static void test_graph_can_init() {
     FlowGraph g;
     
@@ -80,7 +69,7 @@ static void test_mcmf_can_map_one_vm_to_one_cpu() {
     assert(result.total_cost == 1);
     assert(result.total_flow == 1);
 
-    print_graph(g);
+    print_graph(&g);
 
     /* source -> vm_1 */
     assert(g.edges[g.heads[source]].to       == vm_1);
@@ -150,7 +139,7 @@ static void test_mcmf_can_map_two_vm_to_two_cpu_using_reverse_edge() {
     assert(result.total_cost == 8);
     assert(result.total_flow == 2);
 
-    print_graph(g);
+    print_graph(&g);
 
     /* vm_1 -> pcpu_1 */
     assert(g.edges[g.edges[g.heads[vm_1]].next].to == pcpu_1 );
