@@ -6,6 +6,8 @@
 #include <unistd.h>
 #include <limits.h>
 #include <signal.h>
+#include "virt_query.h"
+#include "vm_types.h"
 #define MIN(a, b) ((a) < (b) ? a : b)
 #define MAX(a, b) ((a) > (b) ? a : b)
 
@@ -64,61 +66,13 @@ COMPLETE THE IMPLEMENTATION
 */
 void MemoryScheduler(virConnectPtr conn, int interval)
 {
-	// 1. Get host physical machine's hardware details
-	virNodeInfo nodeinfo;
-    if (virNodeGetInfo(conn, &nodeinfo) < 0) { // Get host CPU info
-        return;
-    }
-
-	// 2. Get number of active VMs
-	virDomainPtr *domains;
-	unsigned int flags = VIR_CONNECT_LIST_DOMAINS_RUNNING |
-						 VIR_CONNECT_LIST_DOMAINS_PERSISTENT;
-	int nr_vms = virConnectListAllDomains(conn, &domains, flags);
-	if (nr_vms < 0) {
-		fprintf(stderr, "Failed to get list of domains\n");
-		return;
+	VirtContext ctx = {
+		.conn = conn
+	};
+	SystemState sys_state;
+	if(virt_query_state(&ctx, &sys_state) < 0) {
+		fprintf(stderr, "Failed to query the current system state\n");
 	}
-	
-	for (int i = 0; i < nr_vms; i++) {
-		virDomainPtr domain = domains[i];
 
-		// 4.1 Get number of vCPUs for a given domain (i.e VM)
-		virDomainInfo dominfo;
-		if (virDomainGetInfo(domain, &dominfo) != 0) { // Get domain vCPU count
-			fprintf(stderr, "Failed to get info for domain: %d\n", i);
-			return;
-		}
-
-		printf("VM: %s\n", virDomainGetName(domain));
-		virDomainMemoryStatStruct stats[VIR_DOMAIN_MEMORY_STAT_NR];
-		int nr_stats;
-		// Retrieve stats. The flags parameter (last) is currently unused (0).
-		nr_stats = virDomainMemoryStats(domain, stats, VIR_DOMAIN_MEMORY_STAT_NR, 0);
-		if (nr_stats < 0) {
-			fprintf(stderr, "Failed to get memory statistics\n");
-			return;
-		}
-
-		for (int i = 0; i < nr_stats; i++) {
-			switch (stats[i].tag) {
-				case VIR_DOMAIN_MEMORY_STAT_ACTUAL_BALLOON:
-					printf("Actual: %llu KiB\n", stats[i].val); break;
-				case VIR_DOMAIN_MEMORY_STAT_UNUSED:
-					printf("Unused: %llu KiB\n", stats[i].val); break;
-				case VIR_DOMAIN_MEMORY_STAT_AVAILABLE:
-					printf("Available: %llu KiB\n", stats[i].val); break;
-				case VIR_DOMAIN_MEMORY_STAT_USABLE:
-					printf("Usable: %llu KiB\n", stats[i].val); break;
-				case VIR_DOMAIN_MEMORY_STAT_RSS:
-					printf("RSS: %llu KiB\n", stats[i].val); break;
-				case VIR_DOMAIN_MEMORY_STAT_MAJOR_FAULT:
-					printf("Major Faults: %llu\n", stats[i].val); break;
-				case VIR_DOMAIN_MEMORY_STAT_MINOR_FAULT:
-					printf("Minor Faults: %llu\n", stats[i].val); break;
-				// Add other tags like SWAP_IN, SWAP_OUT, LAST_UPDATE as needed
-			}
-		}
-		printf("--------------\n");
-	}
+	print_sys_state(&sys_state);
 }
