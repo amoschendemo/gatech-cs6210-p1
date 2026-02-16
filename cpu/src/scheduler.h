@@ -13,4 +13,6 @@ typedef struct {
 
 Schedule compute_schedule(const SystemState *state);
 
+void print_schedule(const Schedule *schedule, int nr_vms);
+
 #endif

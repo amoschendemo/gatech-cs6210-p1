@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <string.h>
 #include "vm_types.h"
 #include "graph.h"
@@ -9,6 +10,11 @@
  * incurs a migration penalty. The cost is 50% of a fully utilized CPU.
  */
 #define MIGRATION_PENALTY 50
+/**
+ * Each PCPU allows to handle up to 2 VMs.
+ */
+#define MAX_VMS_PER_PCPU 2
+
 
 Schedule compute_schedule(const SystemState *state) {
     FlowGraph g;
@@ -43,7 +49,7 @@ Schedule compute_schedule(const SystemState *state) {
 
     /* Define PCPU to Sink */
     for (int j = 0; j < nr_pcpus; j++) {
-        graph_add_edge(&g, pcpu_base + j, sink, 1, 0);
+        graph_add_edge(&g, pcpu_base + j, sink, MAX_VMS_PER_PCPU, 0);
     }
 
     MCMFResult result = mcmf_solve(&g, source, sink);
@@ -52,7 +58,8 @@ Schedule compute_schedule(const SystemState *state) {
 
     /* Extract VM to PCPU assignment */
     for (int i = 0; i < nr_vms; i++) {
-        for(int e = g.heads[vm_base + i]; e >= 0; e = g.edges[g.heads[vm_base + i]].next) {
+        /* Start with the first edge then move to next edge until next is -1 */
+        for(int e = g.heads[vm_base + i]; e >= 0; e = g.edges[e].next) {
             Edge edge = g.edges[e];
             if (edge.to >= pcpu_base && edge.flow > 0 && edge.to < sink) {
                 schedule.vm_to_pcpu[i] = state->pcpus[edge.to - pcpu_base].id;
@@ -62,4 +69,13 @@ Schedule compute_schedule(const SystemState *state) {
     }
 
     return schedule;
+}
+
+void print_schedule(const Schedule *schedule, int nr_vms) {
+    printf("Schedule\n");
+    printf("Total cost: %d\n", schedule->total_cost);
+    printf("Scheduled: %d\n", schedule->num_assigned);
+    for (int i = 0; i < nr_vms; i++) {
+        printf("VM %d -> PCPU %d\n", i, schedule->vm_to_pcpu[i]);
+    }
 }
