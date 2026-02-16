@@ -168,5 +168,7 @@ When comes to pin the VM to pCPU we go through the `SystemState.vms` to find VM'
 
 2. C Program to Implement Adjacency List, GeeksforGeeks, https://www.geeksforgeeks.org/c/c-program-to-implement-adjacency-list/
 
-3. A Versatile Data Structure for Edge-oriented Qraph Algorlthms, https://dl.acm.org/doi/pdf/10.1145/214762.214769
+3. Forward and Reverse Star Representation, Page 35 on https://www.princeton.edu/~alaink/Orf467F13/Readings&AssignmentNetworks.pdf
+
+4. A Versatile Data Structure for Edge-oriented Qraph Algorlthms, https://dl.acm.org/doi/pdf/10.1145/214762.214769
 
