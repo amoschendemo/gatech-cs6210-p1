@@ -6,32 +6,15 @@
 #include <unistd.h>
 #include <limits.h>
 #include <signal.h>
+#include "virt_query.h"
+#include "vm_types.h"
+#include "scheduler.h"
 #define MIN(a, b) ((a) < (b) ? a : b)
 #define MAX(a, b) ((a) > (b) ? a : b)
 
 int is_exit = 0; // DO NOT MODIFY THIS VARIABLE
 
-struct VcpuInfo {
-	unsigned int index;
-	int pcpu_index;
-	unsigned long long cpu_time; // CPU time used, in nanoseconds since the creation of the domain/vm
-};
-
-struct VmInfo {
-	const char *name;
-	unsigned int id;
-	virDomainPtr domain;
-	int nr_vcpus;
-	unsigned long long cpu_time;
-	struct VcpuInfo *vcpus;
-	double utilization;
-	double utilization_2;
-};
-
 void CPUScheduler(virConnectPtr conn, int interval);
-int get_active_vms(struct VmInfo **out_vms, virConnectPtr conn, virNodeInfo nodeinfo, int interval);
-int get_vcpus(struct VcpuInfo **out_vcpus, virDomainPtr domain, int nr_vcpus, virNodeInfo nodeinfo, int interval);
-int pin_vcpu_to_pcpu(virDomainPtr domain, int vcpu_index, int cpumaplen, int pcpu_index);
 
 /*
 DO NOT CHANGE THE FOLLOWING FUNCTION
@@ -43,12 +26,7 @@ void signal_callback_handler()
 }
 
 // The last saved cumulative idle CPU time from previous interval
-unsigned long long *previous_pcpu_stats_idles = NULL;
-
-// The last saved cumulative CPU time used for each vCPU.
-// ASSUMPTION: Each VM has one vCPU.
-struct VmInfo *previous_vm_infos = NULL;
-int previous_nr_vm_infos = 0;
+SystemState previous_sys_state;
 
 /*
 DO NOT CHANGE THE FOLLOWING FUNCTION
@@ -85,223 +63,53 @@ int main(int argc, char *argv[])
 
 	// Closing the connection
 	virConnectClose(conn);
-	
-	// Free memory 
-	if (previous_pcpu_stats_idles != NULL) {
-		free(previous_pcpu_stats_idles);
-	}
-	if (previous_vm_infos != NULL) {
-		free(previous_vm_infos);
-	}
+
 	return 0;
 }
 
 /* COMPLETE THE IMPLEMENTATION */
 void CPUScheduler(virConnectPtr conn, int interval)
 {
-	// 1. Get host physical machine's hardware details
-	virNodeInfo nodeinfo;
-    if (virNodeGetInfo(conn, &nodeinfo) < 0) { // Get host CPU info
-        return;
-    }
-
-	unsigned long long interval_ns = interval * 1000000000L;
-	// 2. Get host CPU info
-	int nr_pcpus = nodeinfo.cpus;
-	if (previous_pcpu_stats_idles == NULL) {
-		previous_pcpu_stats_idles = calloc(nr_pcpus, sizeof(unsigned long long));
+	VirtContext ctx = {
+		.conn = conn
+	};
+	SystemState current_sys_state;
+	if(virt_query_state(ctx, &current_sys_state) < 0) {
+		fprintf(stderr, "Failed to query the current system state\n");
 	}
-	double *pcpu_stats_idle_rates = calloc(nr_pcpus, sizeof(double));
-	for (int i = 0; i < nr_pcpus; i++) {
-        virNodeCPUStats params[VIR_NODE_CPU_STATS_FIELD_LENGTH];
-        int nr_stats = 0;
-
-        // First call with nr_stats=0 to get the number of supported stats for this CPU
-        if (virNodeGetCPUStats(conn, i, NULL, &nr_stats, 0) == 0 && nr_stats != 0) {
-            if (virNodeGetCPUStats(conn, i, params, &nr_stats, 0) == 0) {
-                for (int j = 0; j < nr_stats; j++) {
-                    // Search specifically for the 'idle' field
-                    if (strcmp(params[j].field, VIR_NODE_CPU_STATS_IDLE) == 0) {
-						unsigned long long current_idle_ns = params[j].value;
-						unsigned long long previous_idle_ns = previous_pcpu_stats_idles[i];
-						if (previous_idle_ns > 0) {
-							double idle_rate = (current_idle_ns - previous_idle_ns) * 100 / interval_ns;
-							pcpu_stats_idle_rates[i] = idle_rate;
-						}
-						previous_pcpu_stats_idles[i] = current_idle_ns;
-                    }
-                }
-            }
-        }
-	}
-	for (int i = 0; i < nr_pcpus; i++) {
-		printf("pCPU %d Idle Rate: %f%%\n", i, pcpu_stats_idle_rates[i]);
-	}
-
-	// 3. Get active VMs
-	struct VmInfo *vms = NULL;
-	int nr_vms = get_active_vms(&vms, conn, nodeinfo, interval);
-	if (nr_vms < 0) {
-		fprintf(stderr, "Failed to get list of active VMs\n");
+	printf("Found %d VMs, %d pCPUs\n", current_sys_state.nr_vms, current_sys_state.nr_pcpus);
+	
+	if (previous_sys_state == NULL) {
+		printf("Skip the cycle for gathering more system information for scheduling\n")
+		previous_sys_state = current_sys_state;
 		return;
 	}
-	if (previous_vm_infos == NULL || previous_nr_vm_infos != nr_vms) {
-		previous_vm_infos = calloc(nr_vms, sizeof(struct VmInfo));
-		previous_nr_vm_infos = nr_vms;
+	caculate_utilization_rate(&current_sys_state, &previous_sys_state);
+	
+	printf("System state\n");
+	for(int i = 0; i < current_sys_state.nr_vms; i++){
+		printf(
+			"VM %d (%s) pCPU: %d, utilization: %.2f%%\n",
+			current_sys_state.vms[i].id,
+			current_sys_state.vms[i].name,
+			current_sys_state.vms[i].current_pcpu,
+			current_sys_state.vms[i].cpu_usage_rate
+		);
 	}
-	for (int i = 0; i < nr_vms; i++) {
-		struct VmInfo *vm = &vms[i];
-		struct VmInfo *previous_vm = NULL;
-		// Look up the previous match VM info
-		for (int j = 0; j < nr_vms; j++) {
-			struct VmInfo temp_vm = previous_vm_infos[j];
-			if (temp_vm.id == vm->id) {
-				previous_vm = &temp_vm;
-				break;
-			}
-		}
-
-		// DEBUG
-		if (previous_vm != NULL) {
-			printf("Found previous VM id: %d, with CPU time %lld, utilization 1: %f%% utilization 2: %f%%\n", previous_vm->id, previous_vm->vcpus[0].cpu_time, previous_vm->utilization, previous_vm->utilization_2);
-		}
-
-		double utilization_2 = -1;
-		if (previous_vm != NULL) {
-			utilization_2 = (vm->cpu_time - previous_vm->cpu_time) * 100.0 / interval_ns;
-			vm->utilization_2 = utilization_2;
-		}
-
-		printf("%s, id: %d, vCPUs: [", vm->name, vm->id);
-		int nr_vcpus  = vm->nr_vcpus;
-		for (int j = 0; j < nr_vcpus; j++) {
-			struct VcpuInfo vcpu = vm->vcpus[j];
-			struct VcpuInfo *previous_vcpu = NULL;
-			double utilization = -1;
-			if (previous_vm != NULL) {
-				previous_vcpu = &previous_vm->vcpus[j];
-				utilization = (vcpu.cpu_time - previous_vcpu->cpu_time) * 100.0 / interval_ns;
-			}
-			vm->utilization = utilization;
-			printf("{index: %d, pcpu: %d, cpu time: %lld, utilization: %f%%}", vcpu.index, vcpu.pcpu_index, vcpu.cpu_time, vm->utilization);
-			if (j + 1 < nr_vcpus) {
-				printf(", ");
-			}
-		}
-		printf("], utilization 2: %f%%\n", vm->utilization_2);
+	for(int i = 0; i < current_sys_state.nr_pcpus; i++){
+		printf(
+			"PCPU %d utilization: %.2f%%\n",
+			current_sys_state.pcpus[i].id,
+			current_sys_state.pcpus[i].utilization_rate
+		);
 	}
-	free(previous_vm_infos);
-	previous_vm_infos = vms;
+
+	Schedule schedule = compute_schedule(&current_sys_state);
+	printf("\nSchedule\n");
+	for(int i = 0; i < current_sys_state.nr_vms; i++) {
+		printf("VM %d -> PCPU %d", i, schedule.vm_to_pcpu[i])
+	}
 }
-
-/**
- * @brief Get a list of active VMs
- * 
- * Allocates and initializes an array of VmInfo. Use virConnectListAllDomains,
- * virDomainGetInfo, and virDomainGetVcpus to extract VM's vCPU info.
- * 
- * @param conn: An active connection to a hypervisor.
- * @param out_vms: A pointer to the pointer that will hold the new address.
- * @return: The number of VmInfos allocated on success, or -1 on error.
- */
-int get_active_vms(struct VmInfo **out_vms, virConnectPtr conn, virNodeInfo nodeinfo, int interval){
-	// 1. Safety check
-    if (out_vms == NULL) {
-        return -1; 
-    }
-
-	// 2. Get number of active VMs
-	virDomainPtr *domains;
-	unsigned int flags = VIR_CONNECT_LIST_DOMAINS_RUNNING |
-						 VIR_CONNECT_LIST_DOMAINS_PERSISTENT;
-	int nr_vms = virConnectListAllDomains(conn, &domains, flags);
-	if (nr_vms < 0) {
-		fprintf(stderr, "Failed to get list of domains\n");
-		return -1;
-	}
-
-	// 3. Allocate memory on the HEAP
-    *out_vms = malloc(nr_vms * sizeof(struct VmInfo));
-
-	// 4. Get Virtual Machine's name and vCPU usage
-	for (int i = 0; i < nr_vms; i++) {
-		virDomainPtr domain = domains[i];
-
-		// 4.1 Get number of vCPUs for a given domain (i.e VM)
-		virDomainInfo dominfo;
-		if (virDomainGetInfo(domain, &dominfo) != 0) { // Get domain vCPU count
-			fprintf(stderr, "Failed to get info for domain: %d\n", i);
-			return -1;
-		}
-
-		// 4.2 Allocate memory for getting virtual CPU info
-		int nr_vcpus = dominfo.nrVirtCpu;
-		struct VcpuInfo *vcpuinfos = malloc(nr_vcpus * sizeof(struct VcpuInfo));
-		if (get_vcpus(&vcpuinfos, domain, nr_vcpus, nodeinfo, interval) != nr_vcpus) {
-			fprintf(stderr, "Failed to get virtual CPU info for domain: %d\n", i);
-			return -1;
-		}
-
-		struct VmInfo vm = {
-			.name = strdup(virDomainGetName(domain)),
-			.id = virDomainGetID(domain),
-			.domain = domain,
-			.nr_vcpus = nr_vcpus,
-			.cpu_time = dominfo.cpuTime,
-			.vcpus = vcpuinfos
-		};
-		(*out_vms)[i] = vm;
-		
-		virDomainFree(domains[i]);
-	}
-
-	free(domains);
-	return nr_vms;
-}
-
-
-/**
- * @brief Get virtual CPU information
- * 
- * @param out_vcpus: list of VcpuInfo
- * @return -1 when memory allocation fails, 0 otherwise.
- */
-int get_vcpus(struct VcpuInfo **out_vcpus, virDomainPtr domain, int nr_vcpus, virNodeInfo nodeinfo, int interval) {
-	// 1. Get physical CPUs mapping length in bytes. This is used later when getting vcpu info.
-	int nr_pcpus = nodeinfo.cpus;
-	size_t pcpu_maplen = VIR_CPU_MAPLEN(nr_pcpus);
-
-	// 2. Memory allocation for vcpuinfo and cpumaps
-    virVcpuInfoPtr vcpuinfos = malloc(nr_vcpus * sizeof(virVcpuInfo));
-    unsigned char *cpumaps  = malloc(nr_vcpus * pcpu_maplen);
-
-	// 3. Get vCPU info
-	int ret = virDomainGetVcpus(domain, vcpuinfos, nr_vcpus, cpumaps, pcpu_maplen);
-	if (ret < 0) {
-		// Handle error
-		fprintf(stderr, "Error getting vcpu info\n");
-	} else {
-		// Process the results in cpuinfo and cpumaps
-		for (int i = 0; i < ret; i++) {
-			virVcpuInfo vcpu_info = vcpuinfos[i];
-			struct VcpuInfo vcpu = {
-				.index      = vcpu_info.number,
-				.pcpu_index = vcpu_info.cpu,
-				.cpu_time   = vcpu_info.cpuTime,
-			};
-			(*out_vcpus)[i] = vcpu;
-		}
-	}
-
-	free(vcpuinfos);
-	free(cpumaps);
-	return ret;
-}
-
-struct PcpuInfo {
-	int index;
-	double utilization;
-};
 
 /**
  * @brief Pin a virtual CPU to a physical CPU.

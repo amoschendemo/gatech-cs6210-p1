@@ -9,16 +9,16 @@
 #define MAX_PCPUS    4
 
 typedef struct {
-    char          name[MAX_NAME_LEN];  // VM's name (aka domain's name)
-    int           id;
-    int           current_pcpu;
-    double        cpu_usage;
-    unsigned long last_cache_ts;
+    char               name[MAX_NAME_LEN];  // VM's name (aka domain's name)
+    int                id;
+    int                current_pcpu;
+    double             cpu_usage_rate;
+    unsigned long long cpu_time;
 } VM;
 
 typedef struct {
     int    id;
-    double utilization;
+    double utilization_rate;
 } PCPU;
 
 typedef struct {
