@@ -19,6 +19,9 @@ typedef struct {
 typedef struct {
     int    id;
     double utilization_rate;
+    unsigned long long idle_ns;
+    /* Idle rate is more accurate than utilization rate */
+    double idle_rate;
 } PCPU;
 
 typedef struct {

@@ -32,13 +32,21 @@ int virt_query_state(VirtContext *ctx, SystemState *state) {
         // First call with nr_stats=0 to get the number of supported stats for this CPU
         virNodeCPUStats params[VIR_NODE_CPU_STATS_FIELD_LENGTH];
         int nr_stats = 0;
+        int need_fields = 2;
+        int found_field = 0;
         if (virNodeGetCPUStats(ctx->conn, i, NULL, &nr_stats, 0) == 0 && nr_stats != 0) {
             if (virNodeGetCPUStats(ctx->conn, i, params, &nr_stats, 0) == 0) {
-                for (int j = 0; j < nr_stats; j++) {
-                    // Search specifically for the 'idle' field
+                for (int j = 0; j < nr_stats && found_field < need_fields; j++) {
+                    // Search specifically for the fields needed
                     if (strcmp(params[j].field, VIR_NODE_CPU_STATS_UTILIZATION) == 0) {
-                        state->pcpus[i].utilization_rate = params[j].value / 100.0;
-                        break;
+                        /* Utilization rate seems always be zero */
+                        state->pcpus[i].utilization_rate = params[j].value;  // value in percentage
+                        found_field++;
+                    }
+                    if (strcmp(params[j].field, VIR_NODE_CPU_STATS_IDLE) == 0) {
+                        /* Idle time seems more up to date */
+                        state->pcpus[i].idle_ns = params[j].value;
+                        found_field++;
                     }
                 }
             }
@@ -115,9 +123,42 @@ int caculate_utilization_rate(SystemState *current, SystemState *previous, unsig
             }
         }
     }
+    for (int i = 0; i < current->nr_pcpus; i++) {
+        for (int j = 0; j < previous->nr_pcpus; j++) {
+            if (current->pcpus[i].id == previous->pcpus[j].id) {
+                current->pcpus[i].idle_rate = (current->pcpus[i].idle_ns - previous->pcpus[j].idle_ns) * 100.0 / interval_ns;
+                /* Overwrite utilization rate */
+                current->pcpus[i].utilization_rate = 100.0 - current->pcpus[i].idle_rate;
+                break;
+            }
+        }
+    }
     return vms_updated;
 }
 
 int virt_apply_pinning(VirtContext *ctx, const SystemState *state, const Schedule *schedule) {
     return -1;
+}
+
+void print_sys_state(SystemState *state) {
+    printf("System state\n");
+	for(int i = 0; i < state->nr_vms; i++){
+		printf(
+			"VM %d (%s) pCPU: %d, usage rate: %.4f%%, cpu time: %lld\n",
+			state->vms[i].id,
+			state->vms[i].name,
+			state->vms[i].current_pcpu,
+			state->vms[i].cpu_usage_rate,
+            state->vms[i].cpu_time
+		);
+	}
+	for(int i = 0; i < state->nr_pcpus; i++){
+		printf(
+			"PCPU %d utilization: %.6f%% idle (ns): %lld idel rate: %.4f%%\n",
+			state->pcpus[i].id,
+			state->pcpus[i].utilization_rate,
+            state->pcpus[i].idle_ns,
+            state->pcpus[i].idle_rate
+		);
+	}
 }

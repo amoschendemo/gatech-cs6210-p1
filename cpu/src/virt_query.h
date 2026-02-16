@@ -15,4 +15,6 @@ int caculate_utilization_rate(SystemState *current, SystemState *previous, unsig
 
 int virt_apply_pinning(VirtContext *ctx, const SystemState *state, const Schedule *schedule);
 
+void print_sys_state(SystemState *state);
+
 #endif
