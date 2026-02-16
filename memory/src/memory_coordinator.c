@@ -12,6 +12,7 @@
 #define MAX(a, b) ((a) > (b) ? a : b)
 
 int is_exit = 0; // DO NOT MODIFY THE VARIABLE
+bool set_vm_stats_period = false;
 
 void MemoryScheduler(virConnectPtr conn, int interval);
 
@@ -69,6 +70,13 @@ void MemoryScheduler(virConnectPtr conn, int interval)
 	VirtContext ctx = {
 		.conn = conn
 	};
+
+	if (!set_vm_stats_period) {
+		if (set_vm_memory_stats(&ctx) < 0) {
+			
+		}
+	}
+
 	SystemState sys_state;
 	if(virt_query_state(&ctx, &sys_state) < 0) {
 		fprintf(stderr, "Failed to query the current system state\n");

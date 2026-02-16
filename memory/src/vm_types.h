@@ -11,6 +11,7 @@
 typedef struct {
     char name[MAX_NAME_LEN];  // VM's name (aka domain's name)
     int  id;
+    bool set_stats_period;
     int  max_memory;          // The maximum memory in KBytes allowed
     int  memory_unused;       // VIR_DOMAIN_MEMORY_STAT_UNUSED
     int  memory_available;    // VIR_DOMAIN_MEMORY_STAT_AVAILABLE
@@ -22,7 +23,7 @@ typedef struct {
 typedef struct {
     VM vms[MAX_VMS];
     int nr_vms;
-    int free_memory;
+    unsigned long long free_memory_bytes;
 } SystemState;
 
 #endif

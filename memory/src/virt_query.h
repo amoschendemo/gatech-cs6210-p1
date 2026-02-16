@@ -3,11 +3,12 @@
 
 #include <libvirt/libvirt.h>
 #include "vm_types.h"
-#include "scheduler.h"
 
 typedef struct {
     virConnectPtr conn;
 } VirtContext;
+
+int set_vm_memory_stats(VirtContext *ctx);
 
 int virt_query_state(VirtContext *ctx, SystemState *state);
 
