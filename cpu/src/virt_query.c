@@ -54,6 +54,7 @@ int virt_query_state(VirtContext *ctx, SystemState *state) {
 		fprintf(stderr, "Failed to get list of domains\n");
 		return -1;
 	}
+    state->nr_vms = nr_vms;
 
     /* VM's CPU time */
     for (int i = 0; i < nr_vms; i++) {
@@ -98,7 +99,7 @@ int virt_query_state(VirtContext *ctx, SystemState *state) {
 		
 		virDomainFree(domains[i]);
     }
-    return -1;
+    return 0;
 }
 
 int caculate_utilization_rate(SystemState *current, SystemState *previous, unsigned long long interval_ns) {

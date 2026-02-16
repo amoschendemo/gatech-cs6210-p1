@@ -106,10 +106,12 @@ void CPUScheduler(virConnectPtr conn, int interval)
 		);
 	}
 
-	Schedule schedule = compute_schedule(&current_sys_state);
-	printf("\nSchedule\n");
-	for(int i = 0; i < current_sys_state.nr_vms; i++) {
-		printf("VM %d -> PCPU %d", i, schedule.vm_to_pcpu[i]);
+	if (current_sys_state.nr_vms > 0){
+		Schedule schedule = compute_schedule(&current_sys_state);
+		printf("\nSchedule\n");
+		for(int i = 0; i < current_sys_state.nr_vms; i++) {
+			printf("VM %d -> PCPU %d", i, schedule.vm_to_pcpu[i]);
+		}
 	}
 }
 
