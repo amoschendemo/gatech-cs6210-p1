@@ -12,6 +12,46 @@
 #define MIN(a, b) ((a) < (b) ? a : b)
 #define MAX(a, b) ((a) > (b) ? a : b)
 
+/**
+ * @brief Pin a virtual CPU to a physical CPU.
+ *
+ * This function pins a virtual CPU (vCPU) of a domain to a specific 
+ * physical CPU (pCPU) on the host. It allocates a CPU map (bitmask) 
+ * to specify which pCPU the vCPU should be pinned to, and then uses 
+ * the libvirt API to set the CPU affinity for the vCPU.
+ *
+ * @param domain The domain pointer.
+ * @param nr_pcpus Number of physical CPUs.
+ * @param pcpu_id The physical CPU ID to pin the virtual CPU to.
+ * @return -1 when memory allocation fails, 0 otherwise.
+ */
+static int pin_vcpu_to_pcpu(virDomainPtr domain, int nr_pcpus, int pcpu_id, int vm_id, char *vm_name) {
+	// 1. Allocate the bitmask (cpumap) for the number of host CPUs (nhostcpus) using calloc to initialize it to all zeros
+	int vcpu_index = 0;  // Assume each VM has one VCPU only
+	size_t pcpu_maplen = VIR_CPU_MAPLEN(nr_pcpus);
+	unsigned char *cpumap;
+	cpumap = calloc(1, pcpu_maplen); // Initialize map to all zeros
+	if (!cpumap) {
+		fprintf(stderr, "Memory allocation failed for cpumap\n");
+        return -1;
+    }
+
+	// 2. Set the bit for the physical CPU (pcpu_id) in the cpumap.
+    VIR_USE_CPU(cpumap, pcpu_id);
+
+	// 3. Apply the pinning to the domain
+    if (virDomainPinVcpu(domain, vcpu_index, cpumap, pcpu_maplen) < 0) {
+        fprintf(stderr, "Failed to pin vCPU\n");
+        free(cpumap);
+        return -1;
+    }
+
+	printf("Successfully pinned VM %d (%s) vCPU %d to pCPU %d\n", vm_id, vm_name, vcpu_index, pcpu_id);
+
+	free(cpumap);
+	return 0;
+}
+
 int is_exit = 0; // DO NOT MODIFY THIS VARIABLE
 
 void CPUScheduler(virConnectPtr conn, int interval);
@@ -86,70 +126,24 @@ void CPUScheduler(virConnectPtr conn, int interval)
 		previous_sys_state = current_sys_state;
 		return;
 	}
-	caculate_utilization_rate(&current_sys_state, &previous_sys_state, interval_ns);
 	
-	printf("System state\n");
-	for(int i = 0; i < current_sys_state.nr_vms; i++){
-		printf(
-			"VM %d (%s) pCPU: %d, utilization: %.2f%%\n",
-			current_sys_state.vms[i].id,
-			current_sys_state.vms[i].name,
-			current_sys_state.vms[i].current_pcpu,
-			current_sys_state.vms[i].cpu_usage_rate
-		);
-	}
-	for(int i = 0; i < current_sys_state.nr_pcpus; i++){
-		printf(
-			"PCPU %d utilization: %.2f%%\n",
-			current_sys_state.pcpus[i].id,
-			current_sys_state.pcpus[i].utilization_rate
-		);
-	}
+	caculate_utilization_rate(&current_sys_state, &previous_sys_state, interval_ns);
+	previous_sys_state = current_sys_state;
+
+	printf("\n");
+	print_sys_state(&current_sys_state);
 
 	if (current_sys_state.nr_vms > 0){
 		Schedule schedule = compute_schedule(&current_sys_state);
-		printf("\nSchedule\n");
-		for(int i = 0; i < current_sys_state.nr_vms; i++) {
-			printf("VM %d -> PCPU %d", i, schedule.vm_to_pcpu[i]);
+		print_schedule(&schedule, current_sys_state.nr_vms);
+
+		for (int i = 0; i < current_sys_state.nr_vms; i++) {
+			int pcpu_id = schedule.vm_to_pcpu[i];
+			int vm_id = current_sys_state.vms[i].id;
+			char *vm_name = current_sys_state.vms[i].name;
+			
+			virDomainPtr domain = virDomainLookupByID(conn, vm_id);
+			pin_vcpu_to_pcpu(domain, current_sys_state.nr_pcpus, pcpu_id, vm_id, vm_name);
 		}
 	}
-}
-
-/**
- * @brief Pin a virtual CPU to a physical CPU.
- *
- * This function pins a virtual CPU (vCPU) of a domain to a specific 
- * physical CPU (pCPU) on the host. It allocates a CPU map (bitmask) 
- * to specify which pCPU the vCPU should be pinned to, and then uses 
- * the libvirt API to set the CPU affinity for the vCPU.
- *
- * @param domain The domain pointer.
- * @param vcpu_index The virtual CPU index.
- * @param cpumaplen The length of the CPU map buffer in bytes.
- * @param pcpu_index The physical CPU index to pin the virtual CPU to.
- * @return -1 when memory allocation fails, 0 otherwise.
- */
-int pin_vcpu_to_pcpu(virDomainPtr domain, int vcpu_index, int cpumaplen, int pcpu_index) {
-	// 1. Allocate the bitmask (cpumap) for the number of host CPUs (nhostcpus) using calloc to initialize it to all zeros
-	unsigned char *cpumap;
-	cpumap = calloc(1, cpumaplen); // Initialize map to all zeros
-	if (!cpumap) {
-		fprintf(stderr, "Memory allocation failed for cpumap\n");
-        return -1;
-    }
-
-	// 2. Set the bit for the physical CPU (pcpu_index) in the cpumap.
-    VIR_USE_CPU(cpumap, pcpu_index);
-
-	// 3. Apply the pinning to the domain
-    if (virDomainPinVcpu(domain, vcpu_index, cpumap, cpumaplen) < 0) {
-        fprintf(stderr, "Failed to pin vCPU\n");
-        free(cpumap);
-        return -1;
-    }
-
-	printf("Successfully pinned vCPU %d to pCPU %d\n", vcpu_index, pcpu_index);
-
-	free(cpumap);
-	return 0;
 }

@@ -144,8 +144,9 @@ void print_sys_state(SystemState *state) {
     printf("System state\n");
 	for(int i = 0; i < state->nr_vms; i++){
 		printf(
-			"VM %d (%s) pCPU: %d, usage rate: %.4f%%, cpu time: %lld\n",
-			state->vms[i].id,
+			"%d: VM %d (%s) pCPU: %d, usage rate: %.4f%%, cpu time: %lld\n",
+			i,
+            state->vms[i].id,
 			state->vms[i].name,
 			state->vms[i].current_pcpu,
 			state->vms[i].cpu_usage_rate,
