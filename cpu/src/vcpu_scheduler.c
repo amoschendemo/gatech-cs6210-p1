@@ -33,6 +33,7 @@ DO NOT CHANGE THE FOLLOWING FUNCTION
 */
 int main(int argc, char *argv[])
 {
+	memset(&previous_sys_state, -1, sizeof(SystemState));
 	virConnectPtr conn;
 
 	if (argc != 2)
@@ -70,21 +71,22 @@ int main(int argc, char *argv[])
 /* COMPLETE THE IMPLEMENTATION */
 void CPUScheduler(virConnectPtr conn, int interval)
 {
+	unsigned long long interval_ns = interval * 1000000000L;
 	VirtContext ctx = {
 		.conn = conn
 	};
 	SystemState current_sys_state;
-	if(virt_query_state(ctx, &current_sys_state) < 0) {
+	if(virt_query_state(&ctx, &current_sys_state) < 0) {
 		fprintf(stderr, "Failed to query the current system state\n");
 	}
 	printf("Found %d VMs, %d pCPUs\n", current_sys_state.nr_vms, current_sys_state.nr_pcpus);
 	
-	if (previous_sys_state == NULL) {
-		printf("Skip the cycle for gathering more system information for scheduling\n")
+	if (previous_sys_state.nr_pcpus == -1) {
+		printf("Skip the cycle for gathering more system information for scheduling\n");
 		previous_sys_state = current_sys_state;
 		return;
 	}
-	caculate_utilization_rate(&current_sys_state, &previous_sys_state);
+	caculate_utilization_rate(&current_sys_state, &previous_sys_state, interval_ns);
 	
 	printf("System state\n");
 	for(int i = 0; i < current_sys_state.nr_vms; i++){
@@ -107,7 +109,7 @@ void CPUScheduler(virConnectPtr conn, int interval)
 	Schedule schedule = compute_schedule(&current_sys_state);
 	printf("\nSchedule\n");
 	for(int i = 0; i < current_sys_state.nr_vms; i++) {
-		printf("VM %d -> PCPU %d", i, schedule.vm_to_pcpu[i])
+		printf("VM %d -> PCPU %d", i, schedule.vm_to_pcpu[i]);
 	}
 }
 

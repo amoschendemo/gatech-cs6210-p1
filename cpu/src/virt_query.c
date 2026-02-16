@@ -1,13 +1,14 @@
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
+#include <stdlib.h>
 #include "vm_types.h"
 #include "scheduler.h"
 #include "virt_query.h"
 
 static int get_number_of_pcpus(VirtContext *ctx) {
     virNodeInfo nodeinfo;
-    if (virNodeGetInfo(conn, &nodeinfo) < 0) {
+    if (virNodeGetInfo(ctx->conn, &nodeinfo) < 0) {
         return -1;
     }
     return nodeinfo.cpus;
@@ -48,7 +49,7 @@ int virt_query_state(VirtContext *ctx, SystemState *state) {
     virDomainPtr *domains;
 	unsigned int flags = VIR_CONNECT_LIST_DOMAINS_RUNNING |
 						 VIR_CONNECT_LIST_DOMAINS_PERSISTENT;
-	int nr_vms = virConnectListAllDomains(conn, &domains, flags);
+	int nr_vms = virConnectListAllDomains(ctx->conn, &domains, flags);
 	if (nr_vms < 0) {
 		fprintf(stderr, "Failed to get list of domains\n");
 		return -1;
@@ -58,7 +59,10 @@ int virt_query_state(VirtContext *ctx, SystemState *state) {
     for (int i = 0; i < nr_vms; i++) {
         /* Get Virtual Machine's name and vCPU usage */
 		virDomainPtr domain = domains[i];
-        state->vms[i].name = strdup(virDomainGetName(domain));
+        const char *vm_name = virDomainGetName(domain);
+        if (vm_name) {
+            snprintf(state->vms[i].name, MAX_NAME_LEN, "%s", vm_name);
+        }
         state->vms[i].id = virDomainGetID(domain);
 
         /* Get number of vCPUs for a given domain (i.e VM) */
