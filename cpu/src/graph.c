@@ -1,5 +1,17 @@
-#include "graph.h"
+#include <stdio.h>
 #include <string.h>
+#include "graph.h"
+
+void print_graph(const FlowGraph *g) {
+    printf("Edges:\n");
+    for (int i = 0; i < g->nr_edges; i++) {
+        printf("%d: {to: %d, capacity: %d, cost: %d, flow: %d, next: %d}\n", i, g->edges[i].to, g->edges[i].capacity, g->edges[i].cost, g->edges[i].flow, g->edges[i].next);
+    }
+    printf("Heads:\n");
+    for (int i = 0; i < g->nr_nodes; i++) {
+        printf("%d: %d\n", i, g->heads[i]);
+    }
+}
 
 void graph_init(FlowGraph *g, int nr_nodes) {
     g->nr_edges = 0;

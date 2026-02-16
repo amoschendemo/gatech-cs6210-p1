@@ -4,8 +4,8 @@
 #include <stdbool.h>
 #include <limits.h>
 
-#define MAX_NODES 1 + 8 + 4 + 1  // Source + VMs + PCPUs + Sink
-#define MAX_EDGES 8 + 8 * 4 + 4
+#define MAX_NODES  1 + 8 + 4 + 1      // Source + VMs + PCPUs + Sink
+#define MAX_EDGES (8 + 8 * 4 + 4) * 2 // Double edges
 #define INF       INT_MAX
 
 /**
@@ -65,5 +65,10 @@ void graph_init(FlowGraph *g, int nr_nodes);
  * @brief Adds an edge that connects node u and v with certain capacity and cost.
  */
 int graph_add_edge(FlowGraph *g, int u, int v, int capacity, int cost);
+
+/**
+ * @brief Print out the graph for debugging
+ */
+void print_graph(const FlowGraph *g);
 
 #endif
