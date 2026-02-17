@@ -4,3 +4,4 @@ test_scheduler
 test_mcmf
 vcpu_scheduler
 test_coordinator
+memory_coordinator
