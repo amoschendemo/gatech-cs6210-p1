@@ -16,7 +16,7 @@ static int min(int a, int b) {
  * 
  * @return -1 in error or number of VMs updated
  */
-int update_vm_target_memory(SystemState *sys_state) {
+int compute_vm_target_memory(SystemState *sys_state) {
     int vms_updated = 0;
 	for (int i = 0; i < sys_state->nr_vms; i++) {
 		VM *vm = &sys_state->vms[i];
