@@ -6,18 +6,22 @@
 
 #define MAX_NAME_LEN 8
 #define MAX_VMS      8
-#define MAX_PCPUS    4
 
+/**
+ * @brief System information supports the problem domain
+ * 
+ * @param memory_usable_kb How much the balloon can be inflated without pushing the guest system to swap, corresponds to 'Available' in /proc/meminfo
+ */
 typedef struct {
     char name[MAX_NAME_LEN];  // VM's name (aka domain's name)
     int  id;
-    bool set_stats_period;
-    int  max_memory;          // The maximum memory in KBytes allowed
-    int  memory_unused;       // VIR_DOMAIN_MEMORY_STAT_UNUSED
-    int  memory_available;    // VIR_DOMAIN_MEMORY_STAT_AVAILABLE
-    int  memory_usable;       // VIR_DOMAIN_MEMORY_STAT_USABLE
-    int  memory_rss;          // VIR_DOMAIN_MEMORY_STAT_RSS
-    int  balloon_size;        // VIR_DOMAIN_MEMORY_STAT_ACTUAL_BALLOON
+    int  max_memory_kb;          // The maximum memory in KBytes allowed
+    int  memory_unused_kb;       // VIR_DOMAIN_MEMORY_STAT_UNUSED
+    int  memory_available_kb;    // VIR_DOMAIN_MEMORY_STAT_AVAILABLE
+    int  memory_usable_kb;       // VIR_DOMAIN_MEMORY_STAT_USABLE
+    int  memory_rss_kb;          // VIR_DOMAIN_MEMORY_STAT_RSS
+    int  balloon_size_kb;        // VIR_DOMAIN_MEMORY_STAT_ACTUAL_BALLOON
+    int  target_memory_kb;       // Used for setting new VM memory size
 } VM;
 
 typedef struct {

@@ -5,3 +5,6 @@ compile:
 
 clean:
 	rm -f memory_coordinator
+
+test:
+	gcc -g -Wall test_coordinator.c coordinator.c -o test_coordinator
