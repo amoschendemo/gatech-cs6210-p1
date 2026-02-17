@@ -1,5 +1,6 @@
 #include "mcmf.h"
 #include <string.h>
+#define ADDITION_VM_PENALTY 50
 
 /**
  * @brief Use Bellman-Ford variation to calculate the shortest path between source and sink.
@@ -106,6 +107,11 @@ MCMFResult mcmf_solve(FlowGraph *graph, int source, int sink) {
             /* remove the flow if the counterpart edge was used previously */
             if (graph->edges[e ^ 1].flow > 0) {
                 graph->edges[e ^ 1].flow -= bottleneck;
+            }
+            /* Add penalty to edge betwen pCPU and Sink for adding second VM */
+            if (e == prev_edges[sink]) {
+                graph->edges[e].cost += ADDITION_VM_PENALTY;
+                graph->edges[e ^ 1].cost -= ADDITION_VM_PENALTY;
             }
         }
         
