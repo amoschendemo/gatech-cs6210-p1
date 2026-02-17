@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <limits.h>
 #include <signal.h>
+#include "coordinator.h"
 #include "virt_query.h"
 #include "vm_types.h"
 #define MIN(a, b) ((a) < (b) ? a : b)
@@ -73,14 +74,30 @@ void MemoryScheduler(virConnectPtr conn, int interval)
 
 	if (!set_vm_stats_period) {
 		if (set_vm_memory_stats(&ctx) < 0) {
-			
+			fprintf(stderr, "Failed to set vm memory stats period");
+			return;
 		}
 	}
 
 	SystemState sys_state;
 	if(virt_query_state(&ctx, &sys_state) < 0) {
 		fprintf(stderr, "Failed to query the current system state\n");
+		return;
+	}
+	print_sys_state(&sys_state);
+
+	if (compute_vm_target_memory(&sys_state) < 0) {
+		fprintf(stderr, "Failed to computer new target memory\n");
 	}
 
-	print_sys_state(&sys_state);
+	for(int i = 0; i < sys_state.nr_vms; i++){
+		int vm_id = sys_state.vms[i].id;
+		int vm_target_kb = sys_state.vms[i].target_memory_kb;
+		virDomainPtr domain = virDomainLookupByID(ctx.conn, vm_id);
+		if (virDomainSetMemory(domain, vm_target_kb) < 0) {
+			fprintf(stderr, "Failed to set new VM memory\n");
+		} else {
+			printf("Successfully set VM %d (%s) memory to %'d KB\n", vm_id, sys_state.vms[i].name, vm_target_kb);
+		}
+	}
 }

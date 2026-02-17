@@ -18,13 +18,20 @@ static int min(int a, int b) {
  */
 int compute_vm_target_memory(SystemState *sys_state) {
     int vms_updated = 0;
+    int host_available_kb = sys_state->free_memory_bytes / ONE_K - TARGET_HOST_FREE_MB * ONE_K;
 	for (int i = 0; i < sys_state->nr_vms; i++) {
 		VM *vm = &sys_state->vms[i];
-		int delta = abs(vm->memory_available_kb - TARGET_AVAILABLE_MB * ONE_K);
-        delta = min(delta, MAX_MEMORY_DELTA * ONE_K);
-        if (vm->memory_available_kb < TARGET_AVAILABLE_MB * ONE_K) {
-            vm->target_memory_kb = vm->balloon_size_kb + delta;
+		int delta = abs(vm->memory_available_kb - TARGET_VM_AVAILABLE_MB * ONE_K);
+        delta = min(delta, MAX_MEMORY_DELTA_MB * ONE_K);
+        if (vm->memory_available_kb < TARGET_VM_AVAILABLE_MB * ONE_K) {
+            if (delta <= host_available_kb) {
+                host_available_kb -= delta;
+                vm->target_memory_kb = vm->balloon_size_kb + delta;
+            } else {
+                vm->target_memory_kb = vm->balloon_size_kb;
+            }
         } else {
+            host_available_kb += delta;
             vm->target_memory_kb = vm->balloon_size_kb - delta;
         }
         vms_updated++;
